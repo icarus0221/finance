@@ -1,0 +1,240 @@
+import requests
+import json
+import lxml.html
+import re
+import openpyxl
+import time
+import datetime
+from bs4 import BeautifulSoup
+
+year_list = ["신규시설"]
+start_dt = "20200101"
+end_dt = "20200331"
+now = datetime.datetime.now()
+
+
+#신규시설투자 공시 스크래핑
+
+
+excel_document = openpyxl.load_workbook('E:/python/excel/hkconsensus.xlsx')
+number = 0
+start_time = time.time()
+sheet = excel_document['신규시설']
+row_num = 2
+
+auth = "9f5b63234e192da4aa210e75c8c8bdd1a22fac8f" #인증키
+fin_rpt = "Y" #최종보고서만 검색여부(Y or N) 기본값 : N
+pblntf_detail_ty = "I001"
+page_set = '100'
+
+cd_list = []
+corp_name_list = []
+rcept_dt_list = []
+report_nm_list = []
+
+
+for page_no in range(1,100):
+    command = "https://opendart.fss.or.kr/api/list.json?crtfc_key="
+    command += auth + "&bgn_de=" + start_dt + "&end_de=" + end_dt + "&last_reprt_at=" + fin_rpt + "&pblntf_detail_ty=" + pblntf_detail_ty + "&page_count=" + page_set + "&page_no=" + str(page_no)
+
+    data = requests.get(command).text
+    parsed_data = json.loads(data)
+    try:
+        my_data = parsed_data['list']
+    except:
+        break
+    for my_data_check in my_data:
+        if '신규시설' in my_data_check['report_nm']:
+            cd_list.append(my_data_check['stock_code'])
+
+my_list = set(cd_list) #집합set으로 변환 = 중복제거
+cd_list = list(my_list)
+print(cd_list)
+
+### 검색하고 싶은 종목 리스트가 따로 있을 경우, 아래 ### 삭제
+### cd_list = ['078160']
+
+for cd in cd_list:
+
+    crp_cd = cd
+    fin_rpt = "N" #최종보고서만 검색여부(Y or N) 기본값 : N
+    page_set = '100'
+    number += 1
+    fin_rpt = "N"  # 최종보고서만 검색여부(Y or N) 기본값 : N
+
+    # 커맨드 조합
+    command = "https://opendart.fss.or.kr/api/list.json?crtfc_key="
+    command += auth + "&bgn_de=" + start_dt + "&end_de=" + end_dt \
+               + "&corp_code=" + crp_cd + "&last_reprt_at=" + fin_rpt + "&pblntf_detail_ty=" + pblntf_detail_ty + "&page_count=" + page_set
+
+
+    print(number,'/',len(cd_list),'시작',command)
+
+    #조합한 커맨드 request 보내서 json 받아옴
+    #검색된 보고서 중 가장 최신인 것이 end_dt와 제일 가까움 그 보고서의 rcp_no를 가져옴
+    data = requests.get(command).text
+    parsed_data = json.loads(data)
+    excel_list = []
+    try:
+        my_data = parsed_data['list']
+    except:
+        my_data = []
+
+    if len(my_data) == 0:
+        excel_list = [crp_cd,'','no report','','','','','','','','','','','','','','','','','','','','','']
+        print('no report')
+    else:
+        for year in year_list:
+            time.sleep(2)
+            quarter = 0
+            while quarter < len(my_data) - 1:
+                if year in my_data[quarter]['report_nm']:  # 받고자 하는 분기 입력해야 됨 중요!!!
+                    break
+                else:
+                    quarter = quarter + 1
+
+            my_rcp = my_data[quarter]['rcept_no']
+            company_rcp = my_data[quarter]['rcept_dt']
+            company_name = my_data[quarter]['flr_nm']  # 나중에 excel에 채우기 위해 이름, 종목코드 미리 받아놓음
+            rpt_nm = my_data[quarter]['report_nm']
+            company_cd = my_data[quarter]['corp_code']
+            excel_list = [crp_cd, company_name, rpt_nm, company_rcp]
+
+            # 받아온 rcp_no로 크롤링 할 보고서 url 생성
+            my_url0 = "http://dart.fss.or.kr/dsaf001/main.do?rcpNo=" + my_rcp
+
+            # 다음은 dcm 번호를 알기 위한 소스
+            req = requests.get(my_url0)
+            tree = lxml.html.fromstring(req.text)
+            onclick = tree.xpath('//*[@id="north"]/div[2]/ul/li[1]/a')[0].attrib['onclick']
+            pattern = re.compile("^openPdfDownload\('\d+',\s*'(\d+)'\)")
+            my_dcm = pattern.search(onclick).group(1)
+            my_url = "http://dart.fss.or.kr/report/viewer.do?rcpNo=" + my_rcp + "&dcmNo=" + my_dcm + "&eleId=0&offset=0&length=0&dtd=HTML"
+            print(company_name, my_url)
+
+            req = requests.get(my_url, timeout=20)
+            html = req.text
+            soup = BeautifulSoup(html, 'html.parser')
+            my_title = soup.select('span')
+            my_titles = []
+
+            # 숫자, 한글, 쉼표 제외하고 삭제
+            for title in my_title:
+                a = title.text.strip()
+                a = re.sub('[^-(),0-9가-힣]+', '', a)
+                my_titles.append(a)
+
+            if len(my_titles) == 0:  # 연결 재무재표 비었으면
+                for i in range(0, 7):  # null값 10개 채움
+                    excel_list.append('null')
+
+            else:
+                # 매출액 크롤링
+                flag = 0
+                for title in my_titles:
+                    # print(title.text)
+                    flag += 1
+                    if flag == 2001:
+                        excel_list.append(title)
+                    elif flag == 2002:
+                        excel_list.append(title)
+                        flag = 0
+                        flag2 = 1
+                        break
+                    if '투자내역' in title:  # 연결 손익계산서 표 찾기
+                        flag = 2000
+
+                if flag2 == 0:  # 연결 손익계산서 못 찾았으면 10개 null 값
+                    for i in range(0, 3):
+                        excel_list.append('null')
+                else:
+                    flag2 = 0
+                    flag_1 = 0
+                    flag_2 = 0
+                    flag_3 = 0
+                    done_1 = 0
+                    done_2 = 0
+                    done_3 = 0
+
+                    # my_titles는 list 객체
+                    # 각각의 행의 이름이 다르면 null값 두개씩 채움
+                    flag = 0
+                    print(my_titles)
+                    for title in my_titles:
+                        # Tag안의 텍스트
+                        # print(title.text)
+                        flag += 1
+                        if flag == 2001:
+                            excel_list.append(title)
+                        elif flag == 2003:
+                            excel_list.append(title)
+                        elif flag == 2004:
+                            excel_list.append(title)
+                        elif flag == 2005:
+                            excel_list.append(title)
+                        elif flag == 2006:
+                            excel_list.append(title)
+                            flag = 0
+                            flag2 = 1
+                            break
+                        if '투자목적' in title:
+                            flag = 2000
+                    if flag2 == 0:
+                        for i in range(0, 3):
+                            excel_list.append('null')
+
+            excel_list.append(my_url0)
+            print(excel_list)
+            print(len(excel_list), '완료')
+
+            # 엑셀 파일에서 첫 행부터
+        cell = 'A' + str(row_num)
+        for i in range(1, len(excel_list) + 1):
+            sheet.cell(row=row_num, column=i, value=excel_list[i - 1])
+        row_num += 1
+
+        if number % 20 == 0:
+            excel_document.save('E:/python/excel/hkconsensus.xlsx')  # 엑셀 저장
+
+print('작업 수행된 시간 : %f 초' % (time.time() - start_time))
+excel_document.save('E:/python/excel/hkconsensus.xlsx')  # 엑셀 저장
+
+'''
+    for my_data_check in my_data:
+        if '신규시설' in my_data_check['report_nm']:
+            cd_list.append(my_data_check['stock_code'])
+            corp_name_list.append(my_data_check['corp_name'])
+            rcept_dt_list.append(my_data_check['rcept_dt'])
+            report_nm_list.append(my_data_check['report_nm'])
+
+print(cd_list)
+print(report_nm_list)
+
+row_num = 2
+row_num2 = 2
+row_num3 = 2
+row_num4 = 2
+
+cell = 'A' + str(row_num)
+for i in range(1, len(cd_list) + 1):
+    sheet.cell(row=row_num, column=1, value=cd_list[i - 1])
+    row_num += 1
+
+cell = 'B' + str(row_num2)
+for i in range(1, len(corp_name_list) + 1):
+    sheet.cell(row=row_num2, column=2, value=corp_name_list[i - 1])
+    row_num2 += 1
+
+cell = 'C' + str(row_num3)
+for i in range(1, len(report_nm_list) + 1):
+    sheet.cell(row=row_num3, column=3, value=report_nm_list[i - 1])
+    row_num3 += 1
+
+cell = 'D' + str(row_num4)
+for i in range(1, len(rcept_dt_list) + 1):
+    sheet.cell(row=row_num4, column=4, value=rcept_dt_list[i - 1])
+    row_num4 += 1
+
+print('작업 수행된 시간 : %f 초' % (time.time() - start_time))
+excel_document.save('E:/python/excel/hkconsensus.xlsx')  # 엑셀 저장
+'''
