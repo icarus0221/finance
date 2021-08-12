@@ -1,0 +1,80 @@
+import datetime
+import yfinance as yf
+import pandas as pd
+import openpyxl
+import time
+import clipboard as clp
+from pandas_datareader import data
+import os
+import shutil
+
+os.chdir("E:\python\excel\\US\작업")
+blist = os.listdir('E:\python\excel\\US\작업')
+print(blist)
+start_time = time.time()
+
+for b in blist:
+    print(b)
+    os.rename(b,'pricelist_us.xlsx')
+
+    excel_document = openpyxl.load_workbook('E:/python/excel/us/작업/pricelist_us.xlsx')
+    excel_document2 = openpyxl.load_workbook('E:/python/excel/us/작업/pricelist_us.xlsx', data_only = True)
+    num = 1
+    mainsheet = excel_document2['list']
+    tickers2 = []
+
+    for i in range (1,99):
+        cell_obj = mainsheet.cell (row= i, column = 28)
+        tickers2.append(cell_obj.value)
+    tickers = [x for x in tickers2 if x]
+
+
+    #기존 종목 시트 사용할 때
+    for tic in tickers:
+        sheet = excel_document[tic]
+        sheet2 = excel_document2[tic]
+        stock = yf.Ticker(tic)
+        startdate = sheet2['BD64'].value
+        price = stock.history(start=startdate, end="2021-07-08")
+        print(num, '/', len(tickers), tic)
+        price.to_clipboard()
+        cells = clp.paste()
+        cells = [x.split() for x in cells.split('\n')]
+
+        print(num, '/', len(tickers), tic)
+        del cells[0]
+        pre = sheet2['BE64'].value
+        for i, r in zip(range(pre+1, pre+1+len(cells)), cells):
+            for j, c in zip(range(1, len(r)), r):
+                sheet.cell(row=i, column=j).value = c
+        num += 1
+        sheet = []
+        sheet2 = []
+    excel_document.save('E:/python/excel/us/작업/pricelist_us.xlsx')
+    print('done')
+    os.rename('pricelist_us.xlsx', b)
+    excel_document = []
+    excel_document2 = []
+print('작업 수행된 시간 : %f 초' % (time.time() - start_time))
+
+"""
+
+#새로운 종목 시트 만들 때 사용
+for tic in tickers:
+    sheet = excel_document[tic]
+    stock = yf.Ticker(tic)
+    price = stock.history(start="2016-01-01", end="2020-08-04")
+    print(num, '/', len(tickers), tic)
+    price.to_clipboard()
+    cells = clp.paste()
+    cells = [x.split() for x in cells.split('\n')]
+    print(num, '/', len(tickers), tic)
+    for i, r in zip(range(1, len(cells)), cells):
+        for j, c in zip(range(1, len(r)), r):
+            sheet.cell(row=i, column=j).value = c
+    num += 1
+print('작업 수행된 시간 : %f 초' % (time.time() - start_time))
+excel_document.save('E:/python/excel/pricelist_us.xlsx')
+
+"""
+
